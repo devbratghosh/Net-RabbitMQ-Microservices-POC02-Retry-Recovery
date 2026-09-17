@@ -1,0 +1,31 @@
+# .NET build output
+bin/
+obj/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Logs and runtime output
+logs/
+*.log
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+appsettings.*.local.json
+secrets/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+TestResults/
+coverage/

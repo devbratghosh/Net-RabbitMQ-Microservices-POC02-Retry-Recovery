@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="BuildingBlocks/RabbitMQDemo.Logging/RabbitMQDemo.Logging.csproj" />
+  <Project Path="OrderProducer/OrderProducer.csproj" />
+  <Project Path="PaymentService/PaymentService.csproj" />
+  <Project Path="InventoryService/InventoryService.csproj" />
+  <Project Path="WarehouseService/WarehouseService.csproj" />
+  <Project Path="ReprocessorService/ReprocessorService.csproj" />
+</Solution>

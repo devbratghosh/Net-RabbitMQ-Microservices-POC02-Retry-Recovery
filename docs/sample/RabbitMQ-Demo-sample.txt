@@ -1,0 +1,24 @@
+2026-09-16 22:00:01.001 | OrderProducer      | INFO    | STARTED | publishing to poc2.order.events | routingKey=order.submitted
+2026-09-16 22:00:05.014 | OrderProducer      | INFO    | PUBLISHED | routingKey=order.submitted | ORD-1002 Customer=Bob Amount=245.50 FailureMode=PaymentTransient
+2026-09-16 22:00:05.020 | PaymentService     | INFO    | RECEIVED | ORD-1002 | retry=0 | FailureMode=PaymentTransient
+2026-09-16 22:00:07.030 | PaymentService     | FAILURE | FAILED | ORD-1002 | attempt=1 | Simulated transient payment failure | NACK -> poc2.payment.dead
+2026-09-16 22:00:07.041 | ReprocessorService | INFO    | DLQ_RECEIVED | source=poc2.payment.dead | order=ORD-1002 | retry=0
+2026-09-16 22:00:10.049 | ReprocessorService | RETRY   | REPUBLISHED | order=ORD-1002 | retry=1 | routingKey=order.retry.payment | poc2.payment.dead -> poc2.order.events | ACK source DLQ
+2026-09-16 22:00:10.060 | PaymentService     | INFO    | RECEIVED | ORD-1002 | retry=1 | FailureMode=PaymentTransient
+2026-09-16 22:00:12.071 | PaymentService     | FAILURE | FAILED | ORD-1002 | attempt=2 | Simulated transient payment failure | NACK -> poc2.payment.dead
+2026-09-16 22:00:12.082 | ReprocessorService | INFO    | DLQ_RECEIVED | source=poc2.payment.dead | order=ORD-1002 | retry=1
+2026-09-16 22:00:15.093 | ReprocessorService | RETRY   | REPUBLISHED | order=ORD-1002 | retry=2 | routingKey=order.retry.payment | poc2.payment.dead -> poc2.order.events | ACK source DLQ
+2026-09-16 22:00:15.104 | PaymentService     | INFO    | RECEIVED | ORD-1002 | retry=2 | FailureMode=PaymentTransient
+2026-09-16 22:00:17.115 | PaymentService     | SUCCESS | SUCCESS | ORD-1002 | attempt=3 | ACK
+
+Representative exhausted-retry outcome:
+2026-09-16 22:01:01.001 | PaymentService     | FAILURE | FAILED | ORD-1007 | attempt=1 | Simulated permanent payment failure | NACK -> poc2.payment.dead
+2026-09-16 22:01:04.012 | ReprocessorService | RETRY   | REPUBLISHED | order=ORD-1007 | retry=1 | routingKey=order.retry.payment | poc2.payment.dead -> poc2.order.events | ACK source DLQ
+2026-09-16 22:01:08.023 | PaymentService     | FAILURE | FAILED | ORD-1007 | attempt=2 | Simulated permanent payment failure | NACK -> poc2.payment.dead
+2026-09-16 22:01:11.034 | ReprocessorService | RETRY   | REPUBLISHED | order=ORD-1007 | retry=2 | routingKey=order.retry.payment | poc2.payment.dead -> poc2.order.events | ACK source DLQ
+2026-09-16 22:01:15.045 | PaymentService     | FAILURE | FAILED | ORD-1007 | attempt=3 | Simulated permanent payment failure | NACK -> poc2.payment.dead
+2026-09-16 22:01:18.056 | ReprocessorService | RETRY   | REPUBLISHED | order=ORD-1007 | retry=3 | routingKey=order.retry.payment | poc2.payment.dead -> poc2.order.events | ACK source DLQ
+2026-09-16 22:01:22.067 | PaymentService     | FAILURE | FAILED | ORD-1007 | attempt=4 | Simulated permanent payment failure | NACK -> poc2.payment.dead
+2026-09-16 22:01:25.078 | ReprocessorService | FAILURE | FINAL_FAILURE | order=ORD-1007 | retries=3 | poc2.payment.dead -> poc2.common.failed.orders.queue | ACK source DLQ
+
+POC02 ends at poc2.common.failed.orders.queue. A future POC03 may consume this common queue and attempt a separate failed-order recovery process.

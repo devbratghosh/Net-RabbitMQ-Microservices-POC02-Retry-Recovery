@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RabbitMQ Microservices POC 02 — Topic Routing + Retry Recovery</title>
+<style>
+body{font-family:Inter,Segoe UI,Arial,sans-serif;line-height:1.55;margin:0;background:#f6f8fb;color:#172033}
+main{max-width:1150px;margin:0 auto;padding:34px 24px 70px}
+header{background:#172033;color:white;padding:34px;border-radius:16px;margin-bottom:24px}
+h1{margin:0 0 8px}h2{margin-top:32px}h3{margin-top:24px}
+section{background:white;border:1px solid #e3e8ef;border-radius:14px;padding:22px;margin:18px 0;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+table{border-collapse:collapse;width:100%;margin:14px 0}th,td{border:1px solid #e3e8ef;padding:10px;text-align:left;vertical-align:top}th{background:#f7f9fc}
+pre{background:#111827;color:#e5e7eb;padding:18px;border-radius:10px;overflow:auto}
+code{background:#eef2f7;padding:2px 5px;border-radius:4px}.note{background:#f7f9fc;border-left:4px solid #667085;padding:12px 16px}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener('DOMContentLoaded',()=>mermaid.initialize({startOnLoad:true,theme:'neutral'}));</script>
+</head>
+<body>
+<main>
+<header>
+<h1>RabbitMQ Microservices POC 02</h1>
+<div>Topic routing + service-specific retry + DLQ recovery</div>
+<p>Technical architecture and demonstration guide — not a personal portfolio page.</p>
+</header>
+
+<section>
+<h2>Architecture</h2>
+<div class="mermaid">
+flowchart LR
+P[OrderProducer] -->|order.submitted| E((poc2.order.events<br/>TOPIC))
+E -->|order.submitted| PQ[poc2.payment.orders]
+E -->|order.submitted| IQ[poc2.inventory.orders]
+E -->|order.submitted| WQ[poc2.warehouse.orders]
+PQ --> PS[PaymentService]
+IQ --> IS[InventoryService]
+WQ --> WS[WarehouseService]
+PS -->|NACK false| PDLX((poc2.payment.dlx)) --> PDQ[poc2.payment.dead]
+IS -->|NACK false| IDLX((poc2.inventory.dlx)) --> IDQ[poc2.inventory.dead]
+WS -->|NACK false| WDLX((poc2.warehouse.dlx)) --> WDQ[poc2.warehouse.dead]
+PDQ --> R[ReprocessorService]
+IDQ --> R
+WDQ --> R
+R -->|order.retry.payment| E
+R -->|order.retry.inventory| E
+R -->|order.retry.warehouse| E
+R -->|max retries| F[poc2.common.failed.orders.queue]
+</div>
+</section>
+
+<section>
+<h2>Why POC02 changes fanout to topic</h2>
+<p>POC01 uses a fanout main exchange because the original order event is intentionally broadcast to payment, inventory and warehouse queues. POC02 introduces topic routing so a retry can target only the service that originally failed.</p>
+<pre>order.submitted
+      |
+      +--> poc2.payment.orders
+      +--> poc2.inventory.orders
+      +--> poc2.warehouse.orders
+
+order.retry.payment
+      |
+      +--> poc2.payment.orders only
+
+order.retry.inventory
+      |
+      +--> poc2.inventory.orders only
+
+order.retry.warehouse
+      |
+      +--> poc2.warehouse.orders only</pre>
+</section>
+
+<section>
+<h2>Routing contract</h2>
+<table>
+<tr><th>Purpose</th><th>Exchange</th><th>Routing key</th><th>Destination</th></tr>
+<tr><td>Original order</td><td>poc2.order.events (topic)</td><td>order.submitted</td><td>All service queues</td></tr>
+<tr><td>Payment retry</td><td>poc2.order.events (topic)</td><td>order.retry.payment</td><td>poc2.payment.orders</td></tr>
+<tr><td>Inventory retry</td><td>poc2.order.events (topic)</td><td>order.retry.inventory</td><td>poc2.inventory.orders</td></tr>
+<tr><td>Warehouse retry</td><td>poc2.order.events (topic)</td><td>order.retry.warehouse</td><td>poc2.warehouse.orders</td></tr>
+<tr><td>Payment DLX</td><td>poc2.payment.dlx (direct)</td><td>payment.dead</td><td>poc2.payment.dead</td></tr>
+<tr><td>Inventory DLX</td><td>poc2.inventory.dlx (direct)</td><td>inventory.dead</td><td>poc2.inventory.dead</td></tr>
+<tr><td>Warehouse DLX</td><td>poc2.warehouse.dlx (direct)</td><td>warehouse.dead</td><td>poc2.warehouse.dead</td></tr>
+</table>
+</section>
+
+<section>
+<h2>Retry lifecycle</h2>
+<pre>Service failure
+    |
+    v
+Service DLQ
+    |
+    v
+ReprocessorService
+    |
+    +-- retry < 3 --> service-specific topic routing key --> original service queue
+    |
+    +-- retry >= 3 --> poc2.common.failed.orders.queue</pre>
+</section>
+
+<section>
+<h2>POC02 boundary: common failed-orders queue</h2>
+<p>After the permitted automatic retries are exhausted, the message is moved to <code>poc2.common.failed.orders.queue</code>. This is the end of POC02. POC02 does not attempt another recovery cycle from this queue. A future POC03 can introduce a dedicated failed-order reprocessing service.</p>
+</section>
+
+<section>
+<h2>Same exchange name and idempotent declaration</h2>
+<p>If several applications declare <code>poc2.order.events</code> with compatible settings, they are declaring the same RabbitMQ exchange, not creating separate exchanges. The exchange type is part of the declaration contract.</p>
+<div class="note"><strong>POC01 to POC02:</strong> POC01 uses <code>order_exchange</code> as fanout, while POC02 uses the separately named <code>poc2.order.events</code> as topic. The POC02 naming convention also makes the new topology easy to identify in the Management UI.</div>
+</section>
+
+<section>
+<h2>Why not exchange-per-service?</h2>
+<p>An exchange-per-service/domain design is also valid and can provide stronger domain ownership. POC02 intentionally focuses on a shared event exchange with explicit topic routing so the retry-routing concept is easy to see. A later POC can demonstrate service/domain-owned exchanges.</p>
+</section>
+
+<section>
+<h2>Processing evidence</h2>
+<pre>OrderId received
+      |
+      v
+Simulated processing completes
+      |
+      v
+BasicAckAsync()
+      |
+      v
+RabbitMQ removes message</pre>
+<p>There is intentionally no database in this POC. The application log plus RabbitMQ Ready/Unacked/ACK behavior demonstrates message processing and acknowledgement; it is not persistent business-state tracking.</p>
+</section>
+
+<section>
+<h2>RabbitMQ Management UI connection names</h2>
+<table>
+<tr><th>Application</th><th>Connection name</th></tr>
+<tr><td>OrderProducer</td><td><code>POC2-OrderProducer</code></td></tr>
+<tr><td>PaymentService</td><td><code>POC2-PaymentService</code></td></tr>
+<tr><td>InventoryService</td><td><code>POC2-InventoryService</code></td></tr>
+<tr><td>WarehouseService</td><td><code>POC2-WarehouseService</code></td></tr>
+<tr><td>ReprocessorService</td><td><code>POC2-ReprocessorService</code></td></tr>
+</table>
+<p>These client-provided names are operational labels only. They do not change routing behavior.</p>
+</section>
+
+<section>
+<h2>UI visibility mode</h2>
+<p>Consumers use <code>prefetchCount=1</code>. The two-second service processing delay and three-second reprocessor retry delay are intentionally enabled under explicit demonstration regions so message movement can be observed in RabbitMQ Management UI. These delays are demonstration aids, not production processing settings.</p>
+</section>
+
+<section>
+<h2>Local topology reset</h2>
+<p>POC01 and POC02 use different main exchange names, so they can coexist. For a clean POC02 Management UI demonstration, remove or purge the old POC01 topology first. There is no need to delete the RabbitMQ Docker volume just to switch POCs.</p>
+</section>
+
+<section>
+<h2>Public repository</h2>
+<p>RabbitMQ connection settings are loaded from <code>.env</code>. The actual file is ignored by Git and <code>.env.example</code> contains placeholders. No real production or shared credentials should be committed.</p>
+</section>
+
+<section>
+<h2>Further reading inside this repository</h2>
+<p>See <code>README.md</code> for the GitHub landing-page explanation and <code>docs/architecture.md</code> for the detailed technical architecture.</p>
+</section>
+</main>
+</body>
+</html>
