@@ -638,7 +638,7 @@ No MassTransit is used. No database is used. No HTTP API is required.
 
 ---
 
-## 19. Interview-ready explanation
+## 19. Explanation
 
 > "The producer publishes an OrderSubmitted event using the `order.submitted` routing key to a durable topic exchange. The three service queues are independently bound to that key, so the original order event is delivered to Payment, Inventory and Warehouse. Each service uses manual acknowledgement. On processing failure it sends NACK with `requeue=false`, allowing RabbitMQ to dead-letter the message to the service-specific DLQ. ReprocessorService consumes the DLQs, increments `x-retry-count`, and republishes using a service-specific retry routing key such as `order.retry.payment`. The topic exchange routes that retry only to the affected service queue. After the configured retry limit, the message is moved to `poc2.common.failed.orders.queue`. POC02 ends at this queue; further failed-order recovery is intentionally left for a future POC03."
 
